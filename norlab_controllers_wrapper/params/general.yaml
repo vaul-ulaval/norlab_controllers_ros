@@ -1,5 +1,5 @@
 # Available robots: "husky" / "marmotte" / "warthog_wheels" / "warthog_tracks"
-robot: "husky"
+robot: "weasel"
 # Available terrains: "snow" / "grass"
 terrain: "snow"
 # Implemented controllers: "differential-orthexp" / "ideal-diff-drive-mpc"

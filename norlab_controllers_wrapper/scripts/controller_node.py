@@ -86,7 +86,9 @@ class ControllerNode(Node):
             Ros2Path, "target_path", 100
         )
         self.ref_path_publisher_ = self.create_publisher(
-            Ros2Path, "ref_path", qos_profile_action_status_default,  # Makes durability transient_local
+            Ros2Path,
+            "ref_path",
+            qos_profile_action_status_default,  # Makes durability transient_local
         )
 
         # Initialize subscribers
@@ -97,7 +99,9 @@ class ControllerNode(Node):
         # TF Listener
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self, spin_thread=True)
-        self.tf_timer = self.create_timer(1/self.controller.rate, self.update_robot_pose)
+        self.tf_timer = self.create_timer(
+            1 / self.controller.rate, self.update_robot_pose
+        )
 
         # Odom timer
         self.odom_timer = self.create_timer(1.0, self.update_odom_counter)
@@ -105,7 +109,11 @@ class ControllerNode(Node):
 
         # Initialize action server
         self._action_server = ActionServer(
-            self, FollowPath, "/follow_path", self.follow_path_callback, cancel_callback=self.cancel_callback
+            self,
+            FollowPath,
+            "/follow_path",
+            self.follow_path_callback,
+            cancel_callback=self.cancel_callback,
         )
 
         self.rate = self.create_rate(self.controller.rate)
@@ -131,7 +139,7 @@ class ControllerNode(Node):
         self.add_on_set_parameters_callback(self.on_params_changed)
 
     def on_params_changed(self, params):
-        
+
         # Change controller parameters during runtime (dynamic parameters)
         current_params = self.controller.__dict__
 
@@ -164,24 +172,30 @@ class ControllerNode(Node):
             quat = message.pose.pose.orientation
             twist = message.twist.twist
             self.state[0:3] = [position.x, position.y, position.z]
-            self.state[3:] = R.from_quat([quat.x, quat.y, quat.z, quat.w]).as_euler("xyz")
+            self.state[3:] = R.from_quat([quat.x, quat.y, quat.z, quat.w]).as_euler(
+                "xyz"
+            )
             self.velocity[0:3] = [twist.linear.x, twist.linear.y, twist.linear.z]
             self.velocity[3:] = [twist.angular.x, twist.angular.y, twist.angular.z]
 
     def update_odom_counter(self):
         if self.odom_counter < 8:
-            self.get_logger().warn(f"Received only {self.odom_counter} odom messages in the last second!")
+            self.get_logger().warn(
+                f"Received only {self.odom_counter} odom messages in the last second!"
+            )
         self.odom_counter = 0
 
     def update_robot_pose(self):
         try:
-            tf = self.tf_buffer.lookup_transform("map", "base_link", rclpy.time.Time())
+            tf = self.tf_buffer.lookup_transform("map", "diff_drive", rclpy.time.Time())
             position = tf.transform.translation
             quat = tf.transform.rotation
             self.state[0:3] = [position.x, position.y, position.z]
-            self.state[3:] = R.from_quat([quat.x, quat.y, quat.z, quat.w]).as_euler("xyz")
+            self.state[3:] = R.from_quat([quat.x, quat.y, quat.z, quat.w]).as_euler(
+                "xyz"
+            )
             self.last_odom_time = self.get_clock().now().nanoseconds * 1e-9
-            self.odom_counter += 1  
+            self.odom_counter += 1
         except:
             self.get_logger().warn("Failed to get transform from base_link to map.")
 
@@ -198,7 +212,7 @@ class ControllerNode(Node):
         pose_msg.header.frame_id = "map"
         pose_msg.header.stamp = self.get_clock().now().to_msg()
         pose_msg.pose.position = Point(x=planar_state[0], y=planar_state[1], z=0.0)
-        x, y, z, w = R.from_euler('xyz', [0.0, 0.0, planar_state[2]]).as_quat()
+        x, y, z, w = R.from_euler("xyz", [0.0, 0.0, planar_state[2]]).as_quat()
         pose_msg.pose.orientation = Quaternion(x=x, y=y, z=z, w=w)
         return pose_msg
 
@@ -207,7 +221,9 @@ class ControllerNode(Node):
             if self.last_compute_time < self.last_odom_time:
                 start_time = time.time()
                 command_vector = self.controller.compute_command_vector(self.state)
-                self.get_logger().info(f"Computing delay: {time.time() - start_time} sec")
+                self.get_logger().info(
+                    f"Computing delay: {time.time() - start_time} sec"
+                )
                 self.last_compute_time = self.get_clock().now().nanoseconds * 1e-9
                 self.get_logger().info("COMPUTING!")
             else:
@@ -267,24 +283,30 @@ class ControllerNode(Node):
         self.controller.update_path(current_path)
         self.publish_reference_path()
 
-        self.get_logger().info(f"Path import done, proceeding to executing {current_path.n_poses} pose(s)...")
+        self.get_logger().info(
+            f"Path import done, proceeding to executing {current_path.n_poses} pose(s)..."
+        )
 
-        self.controller.previous_input_array = np.zeros((2, self.controller.horizon_length))
+        self.controller.previous_input_array = np.zeros(
+            (2, self.controller.horizon_length)
+        )
         self.controller.compute_distance_to_goal(self.state, 0)
         self.last_distance_to_goal = self.controller.distance_to_goal
         self.controller.next_path_idx = 0
 
         self.get_logger().info(f"Initial state: {self.state}")
         self.get_logger().info(f"Ref path: {self.controller.path.poses}")
-        self.get_logger().info(f"Distance to goal: {self.controller.distance_to_goal} m.")
+        self.get_logger().info(
+            f"Distance to goal: {self.controller.distance_to_goal} m."
+        )
 
         while not self.controller.goal_reached():
             if goal_handle.is_cancel_requested:
                 goal_handle.canceled()
-                self.get_logger().info('Goal canceled! Stopping robot.')
+                self.get_logger().info("Goal canceled! Stopping robot.")
                 self.stop_robot()
                 return FollowPath.Result()
-            
+
             self.compute_then_publish_command()
             self.publish_optimal_path()
             self.publish_target_path()
@@ -304,18 +326,18 @@ class ControllerNode(Node):
         paths_result = FollowPath.Result()
         paths_result.result_status = UInt32(data=1)
         return paths_result
-    
+
     def cancel_callback(self, goal):
         """Accept or reject a client request to cancel an action."""
-        self.get_logger().info('Received cancel request')
+        self.get_logger().info("Received cancel request")
         return CancelResponse.ACCEPT
-    
+
     def stop_robot(self):
         # self.cmd_vel_msg = TwistStamped()
         # self.cmd_vel_msg.header.stamp = self.get_clock().now().to_msg()
         self.cmd_vel_msg = Twist()
         self.cmd_publisher_.publish(self.cmd_vel_msg)
-    
+
     def custom_path_from_ros2(self, ros2_path):
         poses = []
         for pose in ros2_path.poses:
@@ -323,11 +345,13 @@ class ControllerNode(Node):
             y = pose.pose.position.y
             z = pose.pose.position.z
             quat = pose.pose.orientation
-            roll, pitch, yaw = R.from_quat([quat.x, quat.y, quat.z, quat.w]).as_euler("xyz")
+            roll, pitch, yaw = R.from_quat([quat.x, quat.y, quat.z, quat.w]).as_euler(
+                "xyz"
+            )
             poses.append([x, y, z, roll, pitch, yaw])
         print(poses)
         return Path(np.array(poses))
-    
+
     def clear_paths(self):
         empty_path_msg = Ros2Path()
         self.ref_path_publisher_.publish(empty_path_msg)
