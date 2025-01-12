@@ -176,7 +176,7 @@ class ControllerNode(Node):
 
     def update_robot_pose(self):
         try:
-            tf = self.tf_buffer.lookup_transform("map", "diff_drive", rclpy.time.Time())
+            tf = self.tf_buffer.lookup_transform("map", "base_link", rclpy.time.Time())
             position = tf.transform.translation
             quat = tf.transform.rotation
             self.state[0:3] = [position.x, position.y, position.z]
