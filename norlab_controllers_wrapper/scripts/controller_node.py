@@ -2,6 +2,7 @@
 
 import os
 import numpy as np
+from tf_transformations import euler_from_quaternion
 
 import rclpy
 from rclpy.node import Node
@@ -38,11 +39,17 @@ class ControllerNode(Node):
         os.chdir(dname)
         self.get_logger().info(os.getcwd())
 
-        controller_config_path = self.declare_parameter("controller_config", "None").value
+        controller_config_path = self.declare_parameter(
+            "controller_config", "None"
+        ).value
         self.get_logger().info(f"Controller config: {controller_config_path}")
-        
-        rotation_controller_config_path = self.declare_parameter("rotation_controller_config", "None").value
-        self.get_logger().info(f"Rotation controller config: {rotation_controller_config_path}")
+
+        rotation_controller_config_path = self.declare_parameter(
+            "rotation_controller_config", "None"
+        ).value
+        self.get_logger().info(
+            f"Rotation controller config: {rotation_controller_config_path}"
+        )
 
         self.controller_factory = ControllerFactory()
         self.controller = self.controller_factory.load_parameters_from_yaml(
@@ -52,8 +59,10 @@ class ControllerNode(Node):
         if rotation_controller_config_path == "None":
             self.rotation_controller_bool = False
         else:
-            self.rotation_controller = self.controller_factory.load_parameters_from_yaml(
-                rotation_controller_config_path
+            self.rotation_controller = (
+                self.controller_factory.load_parameters_from_yaml(
+                    rotation_controller_config_path
+                )
             )
             self.rotation_controller_bool = True
 
@@ -210,14 +219,14 @@ class ControllerNode(Node):
             if self.last_compute_time < self.last_odom_time:
                 start_time = time.time()
                 command_vector = self.controller.compute_command_vector(self.state)
-                self.get_logger().info(
-                    f"Computing delay: {time.time() - start_time} sec"
-                )
+                # self.get_logger().info(
+                #     f"Computing delay: {time.time() - start_time} sec"
+                # )
                 self.last_compute_time = self.get_clock().now().nanoseconds * 1e-9
-                self.get_logger().info("COMPUTING!")
+                # self.get_logger().info("COMPUTING!")
             else:
                 command_vector, id = self.controller.get_next_command()
-                self.get_logger().info(f"Executing next command, {id}.")
+                # self.get_logger().info(f"Executing next command, {id}.")
             cmd_vel_msg = self.command_array_to_twist_msg(command_vector)
             self.cmd_publisher_.publish(cmd_vel_msg)
 
@@ -265,10 +274,9 @@ class ControllerNode(Node):
             ref_path_msg.poses.append(pose)
         self.ref_path_publisher_.publish(ref_path_msg)
 
-    def follow_path_callback(self, goal_handle):
-        ## Importing all goal paths
-        self.get_logger().info("Importing goal paths...")
+    def standart_controller_loop(self, goal_handle):
         current_path = self.custom_path_from_ros2(goal_handle.request.path)
+
         self.controller.update_path(current_path)
         self.publish_reference_path()
 
@@ -299,7 +307,7 @@ class ControllerNode(Node):
             self.compute_then_publish_command()
             self.publish_optimal_path()
             self.publish_target_path()
-            self.print_debug()
+            # self.print_debug()
             if self.controller.next_path_idx >= self.controller.path.n_poses - 1:
                 if self.controller.distance_to_goal > self.last_distance_to_goal:
                     break
@@ -315,6 +323,52 @@ class ControllerNode(Node):
         paths_result = FollowPath.Result()
         paths_result.result_status = UInt32(data=1)
         return paths_result
+
+    def rotation_controller(self, goal_handle):
+        pose: PoseStamped = goal_handle.request.path.poses[0]
+        q = np.array(
+            [
+                pose.pose.orientation.x,
+                pose.pose.orientation.y,
+                pose.pose.orientation.z,
+                pose.pose.orientation.w,
+            ]
+        )
+        roll, pitch, yaw = euler_from_quaternion(q)
+        while abs(self.state[5] - yaw) > 0.1:
+            with self.state_velocity_mutex:
+                if goal_handle.is_cancel_requested:
+                    goal_handle.canceled()
+                    self.get_logger().info("Goal canceled! Stopping robot.")
+                    self.stop_robot()
+                    return FollowPath.Result()
+                if self.last_compute_time < self.last_odom_time:
+                    cmd_vel_msg = Twist()
+
+                    delta_to_goal = self.wrap_to_pi(self.state[5] - yaw)
+                    if delta_to_goal < 0:
+                        cmd_vel_msg.angular.z = 0.3 + abs(delta_to_goal) * 0.1
+                    else:
+                        cmd_vel_msg.angular.z = -0.3 - abs(delta_to_goal) * 0.1
+
+                    self.cmd_publisher_.publish(cmd_vel_msg)
+            self.rate.sleep()
+
+        goal_handle.succeed()
+        paths_result = FollowPath.Result()
+        paths_result.result_status = UInt32(data=1)
+        return paths_result
+
+    def wrap_to_pi(self, angle):
+        return (angle + np.pi) % (2 * np.pi) - np.pi
+
+    def follow_path_callback(self, goal_handle):
+        ## Importing all goal paths
+        self.get_logger().info("Importing goal paths...")
+        if len(goal_handle.request.path.poses) > 1:
+            return self.standart_controller_loop(goal_handle)
+        else:
+            return self.rotation_controller(goal_handle)
 
     def cancel_callback(self, goal):
         """Accept or reject a client request to cancel an action."""
