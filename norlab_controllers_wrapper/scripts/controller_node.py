@@ -143,27 +143,36 @@ class ControllerNode(Node):
 
 
     def follow_path_callback(self, goal_handle):
+        SUCCESS = 1
+        ERROR = 2
+        CANCELED = 3
 
         self.get_logger().info("Received path to follow.")
 
-        if self.last_tf_time == 0.0:
-            self.get_logger().warn("No TF received yet, cannot start following path.")
+        try:
+            if self.last_tf_time == 0.0:
+                self.get_logger().warn("No TF received yet, cannot start following path.")
+                goal_handle.abort()
+                return FollowPath.Result(result_status=UInt32(data=0))
+
+            current_path = self.custom_path_from_msg(goal_handle.request.path)
+            self.controller.update_path(current_path)
+            
+            self.publish_reference_path()
+
+            self.controller.previous_input_array = np.zeros((2, self.controller.horizon_length))
+            self.controller.compute_distance_to_goal(self.state, 0)
+            self.last_distance_to_goal = self.controller.linear_distance_to_goal
+            self.controller.next_path_idx = 0
+
+            self.get_logger().info(f"Initial state: {self.state}")
+            self.get_logger().info(f"Ref path: {self.controller.path.poses}")
+            self.get_logger().info(f"Distance to goal: {self.controller.linear_distance_to_goal} m.")
+        except Exception as e:
+            self.get_logger().error(f"Error while processing the received path: {e}")
             goal_handle.abort()
-            return FollowPath.Result(result_status=UInt32(data=0))
+            return FollowPath.Result(result_status=UInt32(data=ERROR))
 
-        current_path = self.custom_path_from_msg(goal_handle.request.path)
-        self.controller.update_path(current_path)
-        
-        self.publish_reference_path()
-
-        self.controller.previous_input_array = np.zeros((2, self.controller.horizon_length))
-        self.controller.compute_distance_to_goal(self.state, 0)
-        self.last_distance_to_goal = self.controller.linear_distance_to_goal
-        self.controller.next_path_idx = 0
-
-        self.get_logger().info(f"Initial state: {self.state}")
-        self.get_logger().info(f"Ref path: {self.controller.path.poses}")
-        self.get_logger().info(f"Distance to goal: {self.controller.linear_distance_to_goal} m.")
 
         while not self.controller.goal_reached():
 
@@ -172,7 +181,7 @@ class ControllerNode(Node):
                 self.get_logger().warn('Goal canceled! Stopping robot.')
                 self.stop_robot()
                 self.clear_paths()
-                return FollowPath.Result()
+                return FollowPath.Result(result_status=UInt32(data=CANCELED))
             
             command_vector = self.compute_next_command()
             self.publish_command(command_vector)
@@ -191,7 +200,7 @@ class ControllerNode(Node):
         goal_handle.succeed()
         self.stop_robot()
         self.clear_paths()
-        return FollowPath.Result(result_status=UInt32(data=1))
+        return FollowPath.Result(result_status=UInt32(data=SUCCESS))
     
 
     def cancel_callback(self, goal):
