@@ -143,6 +143,7 @@ class ControllerNode(Node):
 
 
     def follow_path_callback(self, goal_handle):
+        NOT_READY = 0
         SUCCESS = 1
         ERROR = 2
         CANCELED = 3
@@ -153,7 +154,7 @@ class ControllerNode(Node):
             if self.last_tf_time == 0.0:
                 self.get_logger().warn("No TF received yet, cannot start following path.")
                 goal_handle.abort()
-                return FollowPath.Result(result_status=UInt32(data=0))
+                return FollowPath.Result(result_status=UInt32(data=NOT_READY))
 
             current_path = self.custom_path_from_msg(goal_handle.request.path)
             self.controller.update_path(current_path)
