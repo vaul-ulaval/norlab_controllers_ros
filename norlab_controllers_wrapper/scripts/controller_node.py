@@ -277,8 +277,7 @@ class ControllerNode(Node):
                 self.get_logger().warn("No control sequence computed, using zero command.")
                 command_vector = np.zeros(2)
 
-        deadband_linear = 0.05
-        deadband_angular = 0.1
+        return command_vector
 
     def publish_command(self, command_vector):
 
