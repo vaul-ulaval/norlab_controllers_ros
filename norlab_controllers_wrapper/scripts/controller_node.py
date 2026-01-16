@@ -146,6 +146,10 @@ class ControllerNode(Node):
                 goal_handle.abort()
                 return FollowPath.Result(result_status=UInt32(data=NOT_READY))
 
+            # Check if this is a rotation-only command (single pose path)
+            if len(goal_handle.request.path.poses) == 1:
+                return self.rotation_controller(goal_handle)
+
             current_path = self.custom_path_from_msg(goal_handle.request.path)
             self.controller.update_path(current_path)
 
@@ -194,6 +198,57 @@ class ControllerNode(Node):
         self.clear_paths()
         return FollowPath.Result(result_status=UInt32(data=SUCCESS))
 
+    def rotation_controller(self, goal_handle):
+        """Rotate the robot in place to match the target orientation."""
+        NOT_READY = 0
+        SUCCESS = 1
+        ERROR = 2
+        CANCELED = 3
+
+        pose: PoseStamped = goal_handle.request.path.poses[0]
+        q = np.array(
+            [
+                pose.pose.orientation.x,
+                pose.pose.orientation.y,
+                pose.pose.orientation.z,
+                pose.pose.orientation.w,
+            ]
+        )
+        roll, pitch, yaw = R.from_quat([q[0], q[1], q[2], q[3]]).as_euler("xyz")
+
+        self.get_logger().info(f"Rotation controller: Target yaw = {yaw:.3f}, Current yaw = {self.state[5]:.3f}")
+
+        while abs(self.wrap_to_pi(self.state[5] - yaw)) > 0.1:
+            with self.state_mutex:
+                if goal_handle.is_cancel_requested:
+                    goal_handle.canceled()
+                    self.get_logger().info("Goal canceled! Stopping robot.")
+                    self.stop_robot()
+                    return FollowPath.Result(result_status=UInt32(data=CANCELED))
+
+                if self.last_compute_time < self.last_tf_time:
+                    cmd_vel_msg = Twist()
+
+                    delta_to_goal = self.wrap_to_pi(self.state[5] - yaw)
+                    if delta_to_goal < 0:
+                        cmd_vel_msg.angular.z = 0.3 + abs(delta_to_goal) * 0.1
+                    else:
+                        cmd_vel_msg.angular.z = -0.3 - abs(delta_to_goal) * 0.1
+
+                    self.command_pub.publish(cmd_vel_msg)
+                    self.last_compute_time = self.get_clock().now().nanoseconds * 1e-9
+
+            self.rate.sleep()
+
+        self.get_logger().info("Rotation complete - SUCCESS")
+        goal_handle.succeed()
+        self.stop_robot()
+        return FollowPath.Result(result_status=UInt32(data=SUCCESS))
+
+    def wrap_to_pi(self, angle):
+        """Normalize angle to [-pi, pi] range."""
+        return (angle + np.pi) % (2 * np.pi) - np.pi
+
     def cancel_callback(self, goal):
 
         self.get_logger().info("Received cancel request.")
@@ -224,21 +279,6 @@ class ControllerNode(Node):
 
         deadband_linear = 0.05
         deadband_angular = 0.1
-
-        min_angular = 0.5
-
-        lin_speed = command_vector[0]
-        ang_speed = command_vector[1]
-
-        # # Purely angular motion
-        # if abs(lin_speed) < deadband_linear and abs(ang_speed) > deadband_angular:
-        #     value = max(abs(min_angular), abs(ang_speed))
-        #     ang_speed = np.copysign(value, ang_speed)
-        # # Purely linear motion
-        # elif abs(lin_speed) > deadband_linear and abs(ang_speed) < deadband_angular:
-        #     lin_speed = float(max(min_linear, lin_speed))
-
-        return [lin_speed, ang_speed]
 
     def publish_command(self, command_vector):
 
