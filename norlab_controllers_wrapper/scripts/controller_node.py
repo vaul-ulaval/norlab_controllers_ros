@@ -10,7 +10,7 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.qos import qos_profile_action_status_default
 from multiprocessing import Lock
 
-from geometry_msgs.msg import Twist, TwistStamped, PoseStamped, Point, Quaternion
+from geometry_msgs.msg import TwistStamped, PoseStamped, Point, Quaternion
 from nav_msgs.msg import Odometry
 from nav_msgs.msg import Path
 from std_msgs.msg import UInt32, Float32
@@ -40,8 +40,6 @@ class ControllerNode(Node):
         # Initialize state and command
         self.state = np.zeros(6)  # [x, y, z, roll, pitch, yaw]
         self.state_mutex = Lock()
-        self.cmd_vel_msg = Twist()
-        self.current_velocity = Twist()
 
         # Initialize action server
         self._action_server = ActionServer(
@@ -99,8 +97,7 @@ class ControllerNode(Node):
 
     def init_publishers(self):
 
-        # self.command_pub = self.create_publisher(TwistStamped, "cmd_vel", 10)
-        self.command_pub = self.create_publisher(Twist, "cmd_vel", 10)
+        self.command_pub = self.create_publisher(TwistStamped, "cmd_vel", 10)
         self.optimal_path_pub = self.create_publisher(Path, "optimal_path", 100)
         self.target_path_pub = self.create_publisher(Path, "target_path", 100)
         self.reference_path_pub = self.create_publisher(
@@ -227,13 +224,15 @@ class ControllerNode(Node):
                     return FollowPath.Result(result_status=UInt32(data=CANCELED))
 
                 if self.last_compute_time < self.last_tf_time:
-                    cmd_vel_msg = Twist()
+                    cmd_vel_msg = TwistStamped()
+                    cmd_vel_msg.header.stamp = self.get_clock().now().to_msg()
+                    cmd_vel_msg.header.frame_id = self.robot_frame
 
                     delta_to_goal = self.wrap_to_pi(self.state[5] - yaw)
                     if delta_to_goal < 0:
-                        cmd_vel_msg.angular.z = 0.3 + abs(delta_to_goal) * 0.1
+                        cmd_vel_msg.twist.angular.z = 0.3 + abs(delta_to_goal) * 0.1
                     else:
-                        cmd_vel_msg.angular.z = -0.3 - abs(delta_to_goal) * 0.1
+                        cmd_vel_msg.twist.angular.z = -0.3 - abs(delta_to_goal) * 0.1
 
                     self.command_pub.publish(cmd_vel_msg)
                     self.last_compute_time = self.get_clock().now().nanoseconds * 1e-9
@@ -280,11 +279,12 @@ class ControllerNode(Node):
         return command_vector
 
     def publish_command(self, command_vector):
-
-        # self.cmd_vel_msg.header.stamp = self.get_clock().now().to_msg()
-        self.cmd_vel_msg.linear.x = command_vector[0]
-        self.cmd_vel_msg.angular.z = command_vector[1]
-        self.command_pub.publish(self.cmd_vel_msg)
+        cmd_vel_msg = TwistStamped()
+        cmd_vel_msg.header.stamp = self.get_clock().now().to_msg()
+        cmd_vel_msg.header.frame_id = self.robot_frame
+        cmd_vel_msg.twist.linear.x = command_vector[0]
+        cmd_vel_msg.twist.angular.z = command_vector[1]
+        self.command_pub.publish(cmd_vel_msg)
 
     def publish_optimal_path(self):
 
@@ -345,11 +345,12 @@ class ControllerNode(Node):
         self.goal_angular_distance_pub.publish(Float32(data=self.controller.angular_distance_to_goal))
 
     def stop_robot(self):
-
-        # self.cmd_vel_msg = TwistStamped()
-        # self.cmd_vel_msg.header.stamp = self.get_clock().now().to_msg()
-        self.cmd_vel_msg = Twist()
-        self.command_pub.publish(self.cmd_vel_msg)
+        cmd_vel_msg = TwistStamped()
+        cmd_vel_msg.header.stamp = self.get_clock().now().to_msg()
+        cmd_vel_msg.header.frame_id = self.robot_frame
+        cmd_vel_msg.twist.linear.x = 0.0
+        cmd_vel_msg.twist.angular.z = 0.0
+        self.command_pub.publish(cmd_vel_msg)
 
     def clear_paths(self):
 
